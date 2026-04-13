@@ -21,8 +21,8 @@ A 13M-parameter CNN JEPA plays Pong by watching pixels.
 
 A Joint Embedding Predictive Architecture (JEPA) trained on 30,000 Pong frames.
 The model watches 128x128 pixel screenshots of the game, predicts where the ball
-will be next, and moves the left paddle to intercept it. No physics engine, no
-game state at inference time -- just pixels in, paddle target out.
+will be next, and moves the left paddle to intercept it. The model receives no
+game state -- only the raw pixel screenshot. Pixels in, paddle target out.
 
 The encoder and predictor are frozen (13M params). Only a `Linear(192, 10)` state
 head is trained (1,930 parameters).
