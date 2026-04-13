@@ -1,6 +1,6 @@
 # lepong
 
-A 13M-parameter CNN JEPA plays Pong by watching pixels.
+A 13M-parameter JEPA world model plays Pong by watching pixels.
 
 ```
 128x128 PNG ──> CNN Encoder ──> 192-dim embedding
