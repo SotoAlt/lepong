@@ -1132,7 +1132,7 @@ if (fedTrainBtn && window.LepongFedTrain) {
 }
 let fedWorker = null;
 const spawnFedWorker = () => {
-  const w = new Worker('/train_worker.js');
+  const w = new Worker('train_worker.js');
   w.onmessage = (e) => {
     const { type } = e.data || {};
     if (type === 'status') setFedStatus(e.data.text, 'train');
