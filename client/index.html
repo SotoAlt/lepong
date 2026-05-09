@@ -230,6 +230,89 @@
   }
   footer a { color: var(--amber); text-decoration: none; }
   footer a:hover { text-decoration: underline; }
+
+  /* -- federation training panel ---------------------------------------- */
+  .fed-btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+    padding: 10px 12px; cursor: pointer; transition: all 0.18s; width: 100%;
+  }
+  .fed-btn:hover:not(:disabled) { color: var(--cyan); border-color: var(--cyan); }
+  .fed-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .fed-status {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 9px; letter-spacing: 0.1em; color: var(--ink-low);
+    line-height: 1.4; min-height: 1.4em; margin-top: 8px;
+  }
+  .fed-status.train { color: var(--cyan); }
+  .fed-status.done { color: var(--amber); }
+  .fed-status.err { color: var(--red); }
+  .fed-stat-row {
+    display: flex; justify-content: space-between;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 9px; letter-spacing: 0.1em; color: var(--ink-dim);
+    margin-top: 4px;
+  }
+  .fed-stat-row .val { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .fed-link {
+    display: inline-block;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--ink-low); text-decoration: none;
+    border-top: 1px solid var(--line);
+    padding-top: 8px; margin-top: 8px;
+  }
+  .fed-link:hover { color: var(--cyan); }
+  .fed-progress {
+    height: 2px; width: 100%; background: var(--line);
+    border-radius: 1px; overflow: hidden;
+    margin-top: 4px; margin-bottom: 2px;
+  }
+  .fed-progress-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--cyan), var(--amber));
+    transition: width 0.4s ease, opacity 0.4s ease; opacity: 0;
+  }
+  .fed-progress-fill.active { opacity: 1; }
+  .fed-progress-fill.done { opacity: 0.4; }
+  .fed-toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--ink-dim); cursor: pointer; padding: 8px 0; user-select: none;
+  }
+  .fed-toggle-row:hover .fed-toggle-label { color: var(--ink); }
+  .fed-toggle-label { flex: 1; transition: color 0.18s; }
+  .fed-toggle-switch {
+    position: relative; width: 30px; height: 14px;
+    background: var(--bg); border: 1px solid var(--line);
+    border-radius: 999px; transition: border-color 0.18s, background 0.18s;
+    flex-shrink: 0;
+  }
+  .fed-toggle-switch input {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    margin: 0; padding: 0; opacity: 0; cursor: pointer;
+  }
+  .fed-toggle-knob {
+    position: absolute; top: 1px; left: 1px;
+    width: 10px; height: 10px; background: var(--ink-low);
+    border-radius: 50%;
+    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), background 0.22s;
+    pointer-events: none;
+  }
+  .fed-toggle-switch input:checked ~ .fed-toggle-knob {
+    transform: translateX(16px); background: var(--bg);
+  }
+  .fed-toggle-row:has(input:checked) .fed-toggle-switch {
+    background: var(--cyan); border-color: var(--cyan);
+  }
+  .fed-toggle-row:has(input:checked) .fed-toggle-label { color: var(--cyan); }
+  .fed-toggle-row input:focus-visible ~ .fed-toggle-knob {
+    box-shadow: 0 0 0 2px var(--cyan-soft);
+  }
 </style>
 </head>
 <body>
@@ -340,6 +423,23 @@
         </div>
       </div>
 
+      <div class="section">
+        <div class="section-title">federation</div>
+        <button class="fed-btn" id="fed-train-btn">train one round</button>
+        <label class="fed-toggle-row">
+          <span class="fed-toggle-label">train while playing</span>
+          <span class="fed-toggle-switch">
+            <input type="checkbox" id="fed-toggle" aria-label="train while playing">
+            <span class="fed-toggle-knob"></span>
+          </span>
+        </label>
+        <div class="fed-status" id="fed-status">idle · gameplay feeds the pool</div>
+        <div class="fed-progress"><div class="fed-progress-fill" id="fed-progress-fill"></div></div>
+        <div class="fed-stat-row"><span>rounds contributed</span><span class="val" id="fed-rounds">0</span></div>
+        <div class="fed-stat-row"><span>last val_loss</span><span class="val" id="fed-val">—</span></div>
+        <a class="fed-link" href="https://jepa.waweapps.win/federated/admin" target="_blank" rel="noopener">view hub →</a>
+      </div>
+
     </div>
   </div>
 
@@ -409,6 +509,7 @@
 
 </div>
 
+<script src="train.js"></script>
 <script>
 // ============================================================================
 // LEPONG CLIENT
@@ -942,6 +1043,128 @@ document.addEventListener('keydown', (e) => {
     updateMetrics();
   }
 });
+
+// ============================================================================
+// FEDERATION TRAINING UI (mirror of silent.html / relay.html)
+// ============================================================================
+const fedTrainBtn = document.getElementById('fed-train-btn');
+const fedToggle = document.getElementById('fed-toggle');
+const fedStatusEl = document.getElementById('fed-status');
+const fedRoundsEl = document.getElementById('fed-rounds');
+const fedValEl = document.getElementById('fed-val');
+const fedProgressFill = document.getElementById('fed-progress-fill');
+let fedRoundsContributed = 0;
+
+function fedProgressPct(text, kind) {
+  if (!text) return 0;
+  if (/^(round|rejected) \d+/.test(text)) return 1.0;
+  if (text.startsWith('idle')) return 0;
+  const dlMatch = text.match(/fetching predictor weights \((\d+)\/(\d+) MB\)/);
+  if (dlMatch) {
+    const cur = parseInt(dlMatch[1], 10);
+    const tot = Math.max(parseInt(dlMatch[2], 10), 1);
+    return 0.05 + 0.15 * (cur / tot);
+  }
+  if (text.startsWith('init')) return 0.05;
+  if (text.includes('worker starting')) return 0.05;
+  if (text.includes('connecting')) return 0.22;
+  if (text.includes('waiting for round')) return 0.24;
+  if (text.includes('syncing weights')) return 0.28;
+  if (text.includes('fetching batch')) return 0.35;
+  const trainMatch = text.match(/training \((\d+)\/(\d+)\)/);
+  if (trainMatch) {
+    const cur = parseInt(trainMatch[1], 10);
+    const total = parseInt(trainMatch[2], 10);
+    return 0.40 + 0.30 * (cur / total);
+  }
+  if (text.includes('encoding delta')) return 0.80;
+  if (text.includes('uploaded delta') || text.includes('awaiting round_done')) return 0.92;
+  if (kind === 'err') return 0;
+  return 0;
+}
+function setFedStatus(text, kind) {
+  if (!fedStatusEl) return;
+  fedStatusEl.textContent = text;
+  fedStatusEl.classList.remove('train', 'done', 'err');
+  if (kind) fedStatusEl.classList.add(kind);
+  if (fedProgressFill) {
+    const pct = fedProgressPct(text, kind);
+    fedProgressFill.style.width = (pct * 100).toFixed(0) + '%';
+    fedProgressFill.classList.remove('active', 'done');
+    if (pct >= 1) fedProgressFill.classList.add('done');
+    else if (pct > 0) fedProgressFill.classList.add('active');
+  }
+}
+function recordRoundDone(result) {
+  const allRejected = result.val_loss == null;
+  const accepted = result.accepted !== false && !allRejected;
+  fedRoundsContributed += 1;
+  if (fedRoundsEl) fedRoundsEl.textContent = fedRoundsContributed;
+  if (fedValEl) fedValEl.textContent = allRejected ? '—' : result.val_loss.toFixed(4);
+  let statusText, statusKind;
+  if (allRejected) {
+    statusText = 'round ' + result.round_id + ' · all deltas rejected';
+    statusKind = 'err';
+  } else {
+    statusText = (accepted ? 'round ' : 'rejected ') + result.round_id +
+                 ' · val=' + result.val_loss.toFixed(4);
+    statusKind = accepted ? 'done' : 'err';
+  }
+  setFedStatus(statusText, statusKind);
+}
+if (fedTrainBtn && window.LepongFedTrain) {
+  fedTrainBtn.addEventListener('click', async () => {
+    fedTrainBtn.disabled = true;
+    setFedStatus('starting...', 'train');
+    try {
+      const result = await window.LepongFedTrain.runOneRound({
+        onStatus: (s) => setFedStatus(s, 'train'),
+        onLog: (msg, kind) => console.log('[fed]', msg, kind || ''),
+      });
+      recordRoundDone(result);
+    } catch (e) {
+      console.error('[fed]', e);
+      setFedStatus('error: ' + (e.message || e), 'err');
+    } finally {
+      fedTrainBtn.disabled = false;
+    }
+  });
+}
+let fedWorker = null;
+const spawnFedWorker = () => {
+  const w = new Worker('/train_worker.js');
+  w.onmessage = (e) => {
+    const { type } = e.data || {};
+    if (type === 'status') setFedStatus(e.data.text, 'train');
+    else if (type === 'log') console.log('[fed-worker]', e.data.text);
+    else if (type === 'roundDone') recordRoundDone(e.data);
+    else if (type === 'error') {
+      console.error('[fed-worker]', e.data.message);
+      setFedStatus('error: ' + e.data.message, 'err');
+    } else if (type === 'stopped') {
+      if (fedWorker) { fedWorker.terminate(); fedWorker = null; }
+      if (fedTrainBtn) fedTrainBtn.disabled = false;
+      setFedStatus('idle — gameplay feeds the pool', '');
+    }
+  };
+  w.onerror = (e) => {
+    console.error('[fed-worker] error event:', e);
+    setFedStatus('worker error: ' + (e.message || 'check console'), 'err');
+  };
+  return w;
+};
+if (fedToggle) {
+  fedToggle.addEventListener('change', () => {
+    if (fedToggle.checked) {
+      if (fedTrainBtn) fedTrainBtn.disabled = true;
+      if (!fedWorker) fedWorker = spawnFedWorker();
+      fedWorker.postMessage({ type: 'start' });
+      setFedStatus('worker starting...', 'train');
+    } else if (fedWorker) {
+      fedWorker.postMessage({ type: 'stop' });
+    }
+  });
+}
 
 // ============================================================================
 // BOOT

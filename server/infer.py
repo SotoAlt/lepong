@@ -32,8 +32,24 @@ from PIL import Image
 
 from model.jepa_pool import JEPAPool, EMBED_DIM, HISTORY_SIZE
 
+# Federation data tap — gameplay-driven capture of (emb, action) windows
+# pushed to the federation hub at jepa.waweapps.win. Gated by env vars
+# AURA_FEDERATION_URL + AURA_INGEST_TOKEN; unset → no-op.
+from server.data_tap import MatchSampler
+from server.federation_client import IngestClient
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("lepong")
+
+# Hub-side game id — must match aura-federated/federated/games/<id>/manifest.yaml.
+_GAME_ID = "lepong_v1"
+_BATCH_SIZE = 2
+_INGEST_CLIENT: "IngestClient | None" = None
+
+
+def _log_tap_error(label: str, ex: Exception) -> None:
+    """Tap errors must never raise into gameplay paths."""
+    logger.warning("[tap] %s: %s", label, ex)
 
 COURT_H = 0.6
 COURT_W = 1.0
@@ -136,6 +152,39 @@ app = FastAPI(title="lepong", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+@app.on_event("startup")
+async def _start_ingest_client() -> None:
+    global _INGEST_CLIENT
+    _INGEST_CLIENT = IngestClient.from_env(game_id=_GAME_ID)
+    if _INGEST_CLIENT is not None:
+        _INGEST_CLIENT.start()
+        logger.info("[lepong] federation tap enabled → %s", _INGEST_CLIENT.ingest_url)
+    else:
+        logger.info("[lepong] federation tap disabled (AURA_FEDERATION_URL / AURA_INGEST_TOKEN unset)")
+
+
+@app.on_event("shutdown")
+async def _stop_ingest_client() -> None:
+    if _INGEST_CLIENT is not None:
+        await _INGEST_CLIENT.stop(drain_timeout=3.0)
+
+
+@app.get("/train.js")
+async def train_js():
+    path = pathlib.Path(__file__).parent.parent / "client" / "train.js"
+    if path.exists():
+        return HTMLResponse(path.read_text(), media_type="application/javascript")
+    return HTMLResponse("// train.js not present", media_type="application/javascript", status_code=404)
+
+
+@app.get("/train_worker.js")
+async def train_worker_js():
+    path = pathlib.Path(__file__).parent.parent / "client" / "train_worker.js"
+    if path.exists():
+        return HTMLResponse(path.read_text(), media_type="application/javascript")
+    return HTMLResponse("// train_worker.js not present", media_type="application/javascript", status_code=404)
+
+
 @app.get("/health")
 async def health():
     return {
@@ -174,6 +223,12 @@ async def pong_endpoint(ws: WebSocket):
     history_action_embs: list[torch.Tensor] = []
     plan_count = 0
     plan_ms_total = 0.0
+
+    # Federation data tap — built lazily on the first frame so we capture
+    # the initial embedding too. Gameplay continues unaffected if the
+    # ingest client is None (env vars unset).
+    sampler: "MatchSampler | None" = None
+    _ZERO_ACTION = np.zeros(2, dtype=np.float32)
 
     try:
         while True:
@@ -229,6 +284,28 @@ async def pong_endpoint(ws: WebSocket):
                 action_emb = model.action_encoder(action)[0]
             history_action_embs.append(action_emb)
 
+            # Federation tap. Capture (emb, zero_action) per tick into the
+            # federation pool. Lepong inference uses zero actions (the human
+            # paddle is observed, not commanded by the model), so the tap
+            # matches the inference distribution. Build sampler lazily.
+            if _INGEST_CLIENT is not None:
+                try:
+                    emb_np = emb.detach().cpu().numpy()
+                    if sampler is None:
+                        sampler = MatchSampler(
+                            history=HISTORY_SIZE,
+                            frameskip=1,
+                            action_dim=2,
+                            batch_size=_BATCH_SIZE,
+                            encoder=None,
+                            ingest_client=_INGEST_CLIENT,
+                        )
+                        sampler.push_initial_emb(emb_np)
+                    else:
+                        sampler.push_step_emb(_ZERO_ACTION, emb_np)
+                except Exception as ex:
+                    _log_tap_error("push", ex)
+
             if len(history_embs) > HISTORY_SIZE:
                 history_embs = history_embs[-HISTORY_SIZE:]
             if len(history_action_embs) > HISTORY_SIZE:
@@ -279,6 +356,13 @@ async def pong_endpoint(ws: WebSocket):
         )
     except Exception as e:
         logger.error("Error: %s", e, exc_info=True)
+    finally:
+        if sampler is not None:
+            try:
+                sampler.flush_partial()
+                logger.info("[tap] match end: %s", sampler.stats())
+            except Exception as ex:
+                _log_tap_error("flush_on_disconnect", ex)
 
 
 def main():
