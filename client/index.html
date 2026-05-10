@@ -913,7 +913,10 @@ let wsOpen = false;
 let framesSent = 0;
 
 function connectWS() {
-  const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws-pong';
+  // Compute base path from current page URL so the WS URL works under
+  // /lepong/* (jepa.waweapps.win) and at root (local dev / standalone deploy).
+  const basePath = location.pathname.replace(/\/[^/]*$/, '');
+  const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + basePath + '/ws-pong';
   ws = new WebSocket(url);
 
   ws.onopen = () => {
